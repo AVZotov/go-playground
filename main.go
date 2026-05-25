@@ -20,11 +20,13 @@ func server(req chan int, resp chan string, wg *sync.WaitGroup) {
 }
 
 func ping(req chan int, count int, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for i := 0; i < count; i++ {
-		req <- i
-	}
-	close(req)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < count; i++ {
+			req <- i
+		}
+		close(req)
+	}()
 }
 
 func worker(resp chan string, wg *sync.WaitGroup) {
@@ -50,7 +52,7 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(3)
 	server(req, resp, &wg)
-	ping(req, 100, &wg)
+	ping(req, 1, &wg)
 	worker(resp, &wg)
 
 	wg.Wait()
