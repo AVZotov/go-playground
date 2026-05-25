@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 func producer(jobs chan int) {
 	go func() {
@@ -11,8 +14,9 @@ func producer(jobs chan int) {
 	}()
 }
 
-func worker(jobs chan int, results chan int) {
+func worker(jobs chan int, results chan int, wg *sync.WaitGroup) {
 	go func() {
+		defer wg.Done()
 		for v := range jobs {
 			results <- v * v
 		}
@@ -22,13 +26,20 @@ func worker(jobs chan int, results chan int) {
 func main() {
 	jobs := make(chan int, 10)
 	results := make(chan int, 10)
+	wg := new(sync.WaitGroup)
 
 	producer(jobs)
 	for i := 0; i < 3; i++ {
-		worker(jobs, results)
+		wg.Add(1)
+		worker(jobs, results, wg)
 	}
 
-	for i := 0; i < 11; i++ {
-		fmt.Println(<-results)
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for v := range results {
+		fmt.Println(v)
 	}
 }
