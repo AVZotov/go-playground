@@ -2,44 +2,60 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
+	"time"
 )
 
-func producer(jobs chan int) {
+func server(req chan int, resp chan string, wg *sync.WaitGroup) {
+	defer wg.Done()
 	go func() {
-		for i := 1; i < 11; i++ {
-			jobs <- i
+		for r := range req {
+			sec := rand.Intn(3) + 1
+			time.Sleep(time.Duration(sec) * time.Second)
+			resp <- fmt.Sprintf("%d Response with delay:%d", r, sec)
 		}
-		close(jobs)
+		close(resp)
 	}()
 }
 
-func worker(jobs chan int, results chan int, wg *sync.WaitGroup) {
+func ping(req chan int, count int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for i := 0; i < count; i++ {
+		req <- i
+	}
+	close(req)
+}
+
+func worker(resp chan string, wg *sync.WaitGroup) {
+	defer wg.Done()
 	go func() {
-		defer wg.Done()
-		for v := range jobs {
-			results <- v * v
+		var str string
+		for {
+			select {
+			case str = <-resp:
+				fmt.Println(str)
+			case <-time.After(time.Second * 2):
+				fmt.Println("timeout")
+			case _, ok := <-resp:
+				if !ok {
+					return
+				}
+			default:
+			}
 		}
 	}()
 }
 
 func main() {
-	jobs := make(chan int, 10)
-	results := make(chan int, 10)
-	wg := new(sync.WaitGroup)
+	req := make(chan int)
+	resp := make(chan string)
+	var wg sync.WaitGroup
+	wg.Add(3)
+	server(req, resp, &wg)
+	ping(req, 100, &wg)
+	worker(resp, &wg)
 
-	producer(jobs)
-	for i := 0; i < 3; i++ {
-		wg.Add(1)
-		worker(jobs, results, wg)
-	}
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	for v := range results {
-		fmt.Println(v)
-	}
+	wg.Wait()
+	fmt.Println("done")
 }
