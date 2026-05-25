@@ -8,8 +8,8 @@ import (
 )
 
 func server(req chan int, resp chan string, wg *sync.WaitGroup) {
-	defer wg.Done()
 	go func() {
+		defer wg.Done()
 		for r := range req {
 			sec := rand.Intn(3) + 1
 			time.Sleep(time.Duration(sec) * time.Second)
@@ -28,20 +28,17 @@ func ping(req chan int, count int, wg *sync.WaitGroup) {
 }
 
 func worker(resp chan string, wg *sync.WaitGroup) {
-	defer wg.Done()
 	go func() {
-		var str string
+		defer wg.Done()
 		for {
 			select {
-			case str = <-resp:
-				fmt.Println(str)
-			case <-time.After(time.Second * 2):
-				fmt.Println("timeout")
-			case _, ok := <-resp:
+			case v, ok := <-resp:
 				if !ok {
 					return
 				}
-			default:
+				fmt.Println(v)
+			case <-time.After(time.Second * 2):
+				fmt.Println("timeout")
 			}
 		}
 	}()
