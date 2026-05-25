@@ -1,5 +1,7 @@
 package main
 
+import "fmt"
+
 func producer(jobs chan int) {
 	go func() {
 		for i := 1; i < 11; i++ {
@@ -26,6 +28,7 @@ func main() {
 		worker(jobs, results)
 	}
 
-	worker(jobs, results)
-
+	for i := 0; i < 11; i++ {
+		fmt.Println(<-results)
+	}
 }
