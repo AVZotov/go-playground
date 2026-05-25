@@ -1,60 +1,46 @@
 package main
 
 import (
-	"fmt"
-	"math/rand"
 	"sync"
-	"time"
 )
 
-func server(req chan int, resp chan string, wg *sync.WaitGroup) {
-	go func() {
-		defer wg.Done()
-		for r := range req {
-			sec := rand.Intn(3) + 1
-			time.Sleep(time.Duration(sec) * time.Second)
-			resp <- fmt.Sprintf("%d Response with delay:%d", r, sec)
+func ping(ch1 chan int, ch2 chan int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for i := 0; i < 20; i++ {
+		v, ok := <-ch1
+		if !ok {
+			return
 		}
-		close(resp)
-	}()
+		v++
+		ch2 <- v
+	}
+	close(ch2)
 }
 
-func ping(req chan int, count int, wg *sync.WaitGroup) {
-	go func() {
-		defer wg.Done()
-		for i := 0; i < count; i++ {
-			req <- i
-		}
-		close(req)
-	}()
-}
-
-func worker(resp chan string, wg *sync.WaitGroup) {
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case v, ok := <-resp:
-				if !ok {
-					return
-				}
-				fmt.Println(v)
-			case <-time.After(time.Second * 2):
-				fmt.Println("timeout")
-			}
-		}
-	}()
+func pong(ch2 chan int, ch1 chan int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	v, ok := <-ch2
+	if !ok {
+		close(ch1)
+		return
+	}
+	v++
+	ch1 <- v
 }
 
 func main() {
-	req := make(chan int)
-	resp := make(chan string)
+	ch1 := make(chan int)
+	ch2 := make(chan int)
 	var wg sync.WaitGroup
 	wg.Add(3)
-	server(req, resp, &wg)
-	ping(req, 1, &wg)
-	worker(resp, &wg)
+	go func() {
+		defer wg.Done()
+		ch1 <- 0
+	}()
+
+	go ping(ch1, ch2, &wg)
+
+	go pong(ch2, ch1, &wg)
 
 	wg.Wait()
-	fmt.Println("done")
 }
