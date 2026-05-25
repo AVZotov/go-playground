@@ -5,49 +5,70 @@ import (
 	"sync"
 )
 
-func ping(ch1 chan int, ch2 chan int, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for i := 0; i < 5; i++ {
-		v, ok := <-ch1
-		fmt.Printf("ping received: %d ok:%t\n", v, ok)
-		if !ok {
-			return
-		}
-		v++
-		ch2 <- v
-		fmt.Printf("ping sent: %d ok:%t\n", v, ok)
+func generator(gen chan<- int) {
+	for i := 1; i <= 5; i++ {
+		gen <- i
 	}
-	close(ch2)
+	close(gen)
 }
 
-func pong(ch2 chan int, ch1 chan int, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for {
-		v, ok := <-ch2
-		fmt.Printf("pong received: %d ok:%t\n", v, ok)
-		if !ok {
-			close(ch1)
-			return
+func filter(gen <-chan int, filtered chan<- int, filter func(int) bool) {
+	for v := range gen {
+		if filter(v) {
+			filtered <- v
 		}
-		v++
-		ch1 <- v
-		fmt.Printf("pong sent: %d ok:%t\n", v, ok)
 	}
+	close(filtered)
+}
+
+func worker(filtered <-chan int, processed chan<- int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for v := range filtered {
+		v *= v
+		processed <- v
+	}
+}
+
+func collector(processed <-chan int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	var data []int
+	for v := range processed {
+		data = append(data, v)
+	}
+	fmt.Println(data)
 }
 
 func main() {
-	ch1 := make(chan int)
-	ch2 := make(chan int)
-	var wg sync.WaitGroup
-	wg.Add(3)
+	gen := make(chan int)
+	filtered := make(chan int)
+	processed := make(chan int)
+	wg := new(sync.WaitGroup)
+	go generator(gen)
+	go filter(gen, filtered, isPrime)
 	go func() {
-		defer wg.Done()
-		ch1 <- 0
+		wg1 := new(sync.WaitGroup)
+		const workers = 3
+		wg1.Add(workers)
+		for i := 0; i < workers; i++ {
+			go worker(filtered, processed, wg)
+		}
+		wg1.Wait()
+		close(processed)
 	}()
-
-	go ping(ch1, ch2, &wg)
-
-	go pong(ch2, ch1, &wg)
+	wg.Add(1)
+	go collector(processed, wg)
 
 	wg.Wait()
+}
+
+func isPrime(n int) bool {
+	if n < 2 {
+		return false
+	}
+	for i := 2; i*i <= n; i++ {
+		if n%i == 0 {
+			return false
+		}
+	}
+	return true
 }
