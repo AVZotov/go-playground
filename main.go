@@ -4,59 +4,35 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"sync"
 	"time"
 )
 
-func sGen(ctx context.Context, out chan<- string) {
-	strs := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
-	for {
-		str := strs[rand.Intn(len(strs))]
-		select {
-		case out <- str:
-			time.Sleep(500 * time.Millisecond)
-		case <-ctx.Done():
-			return
-		}
-	}
-}
+func fetchData(ctx context.Context, url string) (string, error) {
+	res := make(chan string, 1)
 
-func iGen(ctx context.Context, out chan<- int) {
-	for {
-		i := rand.Intn(10)
-		select {
-		case out <- i:
-			time.Sleep(300 * time.Millisecond)
-		case <-ctx.Done():
-			return
-		}
-	}
-}
+	go func() {
+		opt := []int{1, 4}
+		t := opt[rand.Intn(2)]
+		time.Sleep(time.Duration(t) * time.Second)
+		res <- fmt.Sprintf("time elapsed to send: %d", t)
+	}()
 
-func collector(ctx context.Context, sOut <-chan string, iOut <-chan int, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for {
-		select {
-		case v := <-sOut:
-			fmt.Println(v)
-		case v := <-iOut:
-			fmt.Println(v)
-		case <-ctx.Done():
-			fmt.Println(ctx.Err())
-			return
-		}
+	select {
+	case v := <-res:
+		return v, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
 	}
 }
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	sChan := make(chan string)
-	iChan := make(chan int)
-	defer cancel()
-	wg := sync.WaitGroup{}
-	go sGen(ctx, sChan)
-	go iGen(ctx, iChan)
-	wg.Add(1)
-	go collector(ctx, sChan, iChan, &wg)
-	wg.Wait()
+	for i := 0; i < 10; i++ {
+		ctx, close := context.WithTimeout(context.Background(), 2*time.Second)
+		defer close()
+		v, err := fetchData(ctx, "http://www.google.com")
+		if err != nil {
+			fmt.Println(err)
+		}
+		fmt.Println(v)
+	}
 }
