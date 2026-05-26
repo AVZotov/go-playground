@@ -11,6 +11,7 @@ import (
 func gen(ctx context.Context, timeOut time.Duration, in chan<- int) {
 	for {
 		v := rand.Intn(100)
+
 		select {
 		case in <- v:
 			time.Sleep(timeOut * time.Millisecond)
@@ -20,7 +21,7 @@ func gen(ctx context.Context, timeOut time.Duration, in chan<- int) {
 	}
 }
 
-func funIn(ctx context.Context, in ...<-chan int) (out chan int) {
+func fanIn(ctx context.Context, in ...<-chan int) (out chan int) {
 	out = make(chan int)
 	wg := sync.WaitGroup{}
 
@@ -37,7 +38,6 @@ func funIn(ctx context.Context, in ...<-chan int) (out chan int) {
 			}
 		}(ch)
 	}
-
 	go func() {
 		wg.Wait()
 		close(out)
@@ -57,5 +57,7 @@ func main() {
 	go gen(ctx, time.Duration(200), ch2)
 	go gen(ctx, time.Duration(300), ch3)
 
-	fmt.Println(<-funIn(ctx, ch1, ch2, ch3))
+	for v := range fanIn(ctx, ch1, ch2, ch3) {
+		fmt.Println(v)
+	}
 }
