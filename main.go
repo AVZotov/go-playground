@@ -13,7 +13,7 @@ func gen(ctx context.Context, timeOut time.Duration, in chan<- int) {
 		v := rand.Intn(100)
 		select {
 		case in <- v:
-			time.Sleep(timeOut)
+			time.Sleep(timeOut * time.Millisecond)
 		case <-ctx.Done():
 			return
 		}
@@ -36,24 +36,26 @@ func funIn(ctx context.Context, in ...<-chan int) (out chan int) {
 				}
 			}
 		}(ch)
-		go func() {
-			wg.Wait()
-			close(out)
-		}()
 	}
+
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
 	return out
 }
 
 func main() {
 
-	in := make(chan int)
+	ch1 := make(chan int)
+	ch2 := make(chan int)
+	ch3 := make(chan int)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel()
 
-	d := []int{100, 200, 300}
-	for _, dd := range d {
-		go gen(ctx, time.Duration(dd), in)
-	}
-	out := funIn(ctx, in)
-	fmt.Println(<-out)
+	go gen(ctx, time.Duration(100), ch1)
+	go gen(ctx, time.Duration(200), ch2)
+	go gen(ctx, time.Duration(300), ch3)
+
+	fmt.Println(<-funIn(ctx, ch1, ch2, ch3))
 }
