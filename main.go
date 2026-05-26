@@ -1,74 +1,62 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"math/rand"
 	"sync"
+	"time"
 )
 
-func generator(gen chan<- int) {
-	for i := 1; i <= 5; i++ {
-		gen <- i
-	}
-	close(gen)
-}
-
-func filter(gen <-chan int, filtered chan<- int, filter func(int) bool) {
-	for v := range gen {
-		if filter(v) {
-			filtered <- v
+func sGen(ctx context.Context, out chan<- string) {
+	strs := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
+	for {
+		str := strs[rand.Intn(len(strs))]
+		select {
+		case out <- str:
+			time.Sleep(500 * time.Millisecond)
+		case <-ctx.Done():
+			return
 		}
 	}
-	close(filtered)
 }
 
-func worker(filtered <-chan int, processed chan<- int, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for v := range filtered {
-		v *= v
-		processed <- v
+func iGen(ctx context.Context, out chan<- int) {
+	for {
+		i := rand.Intn(10)
+		select {
+		case out <- i:
+			time.Sleep(300 * time.Millisecond)
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
-func collector(processed <-chan int, wg *sync.WaitGroup) {
+func collector(ctx context.Context, sOut <-chan string, iOut <-chan int, wg *sync.WaitGroup) {
 	defer wg.Done()
-	var data []int
-	for v := range processed {
-		data = append(data, v)
+	for {
+		select {
+		case v := <-sOut:
+			fmt.Println(v)
+		case v := <-iOut:
+			fmt.Println(v)
+		case <-ctx.Done():
+			fmt.Println(ctx.Err())
+			return
+		}
 	}
-	fmt.Println(data)
 }
 
 func main() {
-	gen := make(chan int)
-	filtered := make(chan int)
-	processed := make(chan int)
-	wg := new(sync.WaitGroup)
-	go generator(gen)
-	go filter(gen, filtered, isPrime)
-	go func() {
-		wg1 := new(sync.WaitGroup)
-		const workers = 3
-		wg1.Add(workers)
-		for i := 0; i < workers; i++ {
-			go worker(filtered, processed, wg)
-		}
-		wg1.Wait()
-		close(processed)
-	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	sChan := make(chan string)
+	iChan := make(chan int)
+	defer cancel()
+	wg := sync.WaitGroup{}
+	go sGen(ctx, sChan)
+	go iGen(ctx, iChan)
 	wg.Add(1)
-	go collector(processed, wg)
-
+	go collector(ctx, sChan, iChan, &wg)
 	wg.Wait()
-}
-
-func isPrime(n int) bool {
-	if n < 2 {
-		return false
-	}
-	for i := 2; i*i <= n; i++ {
-		if n%i == 0 {
-			return false
-		}
-	}
-	return true
 }
