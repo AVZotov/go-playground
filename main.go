@@ -14,7 +14,7 @@ func fetchData(ctx context.Context, url string) (string, error) {
 		opt := []int{1, 4}
 		t := opt[rand.Intn(2)]
 		time.Sleep(time.Duration(t) * time.Second)
-		res <- fmt.Sprintf("time elapsed to send: %d", t)
+		res <- fmt.Sprintf("Sending request to: %s\ntime elapsed: %d", url, t)
 	}()
 
 	select {
