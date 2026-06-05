@@ -19,12 +19,19 @@ func NewEventBus() *EventBus {
 func (eb *EventBus) Publish(topic string, data any) {
 	for _, hw := range eb.clients[topic] {
 		hw.Handler(data)
+		if hw.isOnce {
+			eb.Unsubscribe(topic, hw)
+		}
 	}
 }
 
 func (eb *EventBus) Subscribe(topic string, hw *HandlerWrapper) {
-	hw.topic = topic
 	eb.clients[topic] = append(eb.clients[topic], hw)
+}
+
+func (eb *EventBus) SubscribeOnce(topic string, hw *HandlerWrapper) {
+	hw.isOnce = true
+	eb.Subscribe(topic, hw)
 }
 
 func (eb *EventBus) Unsubscribe(topic string, hw *HandlerWrapper) {
@@ -40,8 +47,8 @@ func (eb *EventBus) Unsubscribe(topic string, hw *HandlerWrapper) {
 
 type HandlerWrapper struct {
 	id      string
-	topic   string
 	Handler func(data any)
+	isOnce  bool
 }
 
 func NewHandlerWrapper(f func(data any)) *HandlerWrapper {
@@ -59,11 +66,9 @@ func main() {
 	h1 := NewHandlerWrapper(f1)
 	h2 := NewHandlerWrapper(f2)
 
-	bus.Subscribe("user.created", h1)
+	bus.SubscribeOnce("user.created", h1)
 	bus.Subscribe("user.created", h2)
-	bus.Subscribe("order.placed", h1)
 	bus.Publish("user.created", "Alice")
-	bus.Unsubscribe("user.created", h1)
 	bus.Publish("user.created", "Bob")
-	bus.Publish("order.placed", "order-123")
+	bus.Publish("user.created", "Carlos")
 }
