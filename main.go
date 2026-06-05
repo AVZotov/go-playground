@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -17,12 +20,25 @@ func NewEventBus() *EventBus {
 }
 
 func (eb *EventBus) Publish(topic string, data any) {
-	for _, hw := range eb.clients[topic] {
-		hw.Handler(data)
-		if hw.isOnce {
-			eb.Unsubscribe(topic, hw)
+	wg := sync.WaitGroup{}
+	for k := range eb.clients {
+		if matchTopic(k, topic) {
+			handlers := eb.clients[k]
+			remaining := make([]*HandlerWrapper, 0, len(handlers))
+			for _, hw := range eb.clients[k] {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					hw.Handler(data)
+				}()
+				if !hw.isOnce {
+					remaining = append(remaining, hw)
+				}
+			}
+			eb.clients[k] = remaining
 		}
 	}
+	wg.Wait()
 }
 
 func (eb *EventBus) Subscribe(topic string, hw *HandlerWrapper) {
@@ -58,17 +74,44 @@ func NewHandlerWrapper(f func(data any)) *HandlerWrapper {
 	}
 }
 
+func matchTopic(pattern, topic string) bool {
+	if pattern == "*" {
+		return true
+	}
+
+	pSlice := strings.Split(pattern, ".")
+	tSlice := strings.Split(topic, ".")
+	if len(pSlice) != len(tSlice) {
+		return false
+	}
+	for i, p := range pSlice {
+		if p != tSlice[i] && p != "*" {
+			return false
+		}
+	}
+	return true
+}
+
 func main() {
 	bus := NewEventBus()
 
-	f1 := func(data any) { fmt.Println("h1 got:", data) }
-	f2 := func(data any) { fmt.Println("h2 got:", data) }
-	h1 := NewHandlerWrapper(f1)
-	h2 := NewHandlerWrapper(f2)
+	h1 := NewHandlerWrapper(
+		func(data any) {
+			time.Sleep(100 * time.Millisecond)
+			fmt.Println("h1 got:", data)
+		},
+	)
+	h2 := NewHandlerWrapper(
+		func(data any) {
+			time.Sleep(50 * time.Millisecond)
+			fmt.Println("h2 got:", data)
+		},
+	)
 
-	bus.SubscribeOnce("user.created", h1)
+	bus.Subscribe("user.created", h1)
 	bus.Subscribe("user.created", h2)
-	bus.Publish("user.created", "Alice")
-	bus.Publish("user.created", "Bob")
-	bus.Publish("user.created", "Carlos")
+
+	start := time.Now()
+	bus.Publish("user.created", "alice")
+	fmt.Printf("заняло %v (должно ~100ms, не 150ms)\n", time.Since(start).Round(time.Millisecond))
 }
