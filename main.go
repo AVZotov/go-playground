@@ -1,210 +1,68 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"math/rand"
-	"sync"
-	"sync/atomic"
-	"time"
+	
+	"github.com/google/uuid"
 )
 
-type workerManager struct {
-	mu         sync.Mutex
-	wg         *sync.WaitGroup
-	minWorkers int
-	maxWorkers int
-	wCount     *int64
-	cancels    []context.CancelFunc
+type EventBus struct {
+	clients map[string]*HandlerWrapper
 }
 
-func newWorkerManager(minWorkers, maxWorkers int) *workerManager {
-	return &workerManager{
-		minWorkers: minWorkers,
-		maxWorkers: maxWorkers,
-		wCount:     new(int64),
-		cancels:    make([]context.CancelFunc, 0),
-		wg:         &sync.WaitGroup{},
+func NewEventBus() *EventBus {
+	return &EventBus{
+		clients: make(map[string]*HandlerWrapper),
 	}
 }
 
-func (wm *workerManager) addWorkers(ctx context.Context, ch chan string, amount int) {
-	wm.mu.Lock()
-	defer wm.mu.Unlock()
-	if len(wm.cancels) == 0 {
-		for i := 0; i < wm.minWorkers; i++ {
-			wm.wg.Add(1)
-			go worker(ctx, ch, wm.wCount, wm.wg)
+func (eb *EventBus) Publish(topic string, data any) {
+	for _, v := range eb.clients {
+		if topic == v.topic {
+			v.Handler(data)
 		}
 	}
-	for i := 0; i < amount; i++ {
-		chCtx, cancel := context.WithCancel(ctx)
-		wm.wg.Add(1)
-		go worker(chCtx, ch, wm.wCount, wm.wg)
-		wm.cancels = append(wm.cancels, cancel)
+}
+
+func (eb *EventBus) Subscribe(topic string, hw *HandlerWrapper) {
+	hw.topic = topic
+	eb.clients[topic] = hw
+}
+
+func (eb *EventBus) Unsubscribe(topic string, hw *HandlerWrapper) {
+	for k, v := range eb.clients {
+		if topic == v.topic && k == hw.id {
+			delete(eb.clients, k)
+		}
 	}
 }
 
-func (wm *workerManager) cancelWorkers(amount int) {
-	wm.mu.Lock()
-	defer wm.mu.Unlock()
-	if len(wm.cancels) < amount {
-		return
+type HandlerWrapper struct {
+	id      string
+	topic   string
+	Handler func(data any)
+}
+
+func NewHandlerWrapper(f func(data any)) *HandlerWrapper {
+	return &HandlerWrapper{
+		id:      uuid.New().String(),
+		Handler: f,
 	}
-	for i := 0; i < amount; i++ {
-		wm.cancels[i]()
-	}
-	wm.cancels = wm.cancels[amount:]
 }
 
 func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	req := reqGenerator(ctx)
-	filtered := rateLimiter(ctx, req)
-	res := masterWorker(ctx, filtered)
-	out := semaphore(ctx, res)
-	for v := range out {
-		fmt.Println(v)
-	}
-}
-
-func semaphore(ctx context.Context, ch <-chan string) chan string {
-	wg := &sync.WaitGroup{}
-	out := make(chan string)
-	sem := make(chan struct{}, 5)
-
-	go func() {
-		defer func() {
-			wg.Wait()
-			close(out)
-		}()
-		for v := range ch { // читаем пока ch открыт
-			wg.Add(1)
-			sem <- struct{}{} // занимаем место (ждём если 5 заняты)
-			go func(val string) {
-
-				defer func() {
-					<-sem
-					wg.Done()
-				}() // освобождаем место
-				select {
-				case out <- val:
-					time.Sleep(1 * time.Second)
-				case <-ctx.Done():
-				}
-			}(v)
-		}
-	}()
-
-	return out
-}
-
-func masterWorker(ctx context.Context, filtered <-chan int) chan string {
-	const (
-		MinWorkers = 5
-		MaxWorkers = 50
-	)
-	ch := make(chan string, MaxWorkers)
-
-	wm := newWorkerManager(MinWorkers, MaxWorkers)
-	wm.addWorkers(ctx, ch, 0)
-
-	go func() {
-		wm.wg.Wait()
-		close(ch)
-	}()
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				fmt.Println("master worker done")
-				return
-			case req := <-filtered:
-				target := req
-				if target < wm.minWorkers {
-					continue
-				}
-				if target <= wm.maxWorkers && target > wm.minWorkers {
-					target = target - wm.minWorkers
-				}
-
-				if target > wm.maxWorkers {
-					target = wm.maxWorkers - wm.minWorkers
-				}
-
-				// шаг 2 — приводим к target
-				current := len(wm.cancels)
-				if target > current {
-					go wm.addWorkers(ctx, ch, target-current)
-				}
-				if target < current {
-					wm.cancelWorkers(current - target)
-				}
-			}
-		}
-	}()
-	return ch
-}
-
-func worker(done context.Context, ch chan<- string, index *int64, wg *sync.WaitGroup) {
-	defer wg.Done()
-	i := atomic.AddInt64(index, 1)
-
-	for {
-		select {
-		case <-done.Done():
-			atomic.AddInt64(index, -1)
-			return
-		case ch <- fmt.Sprintf("hi from worker %d", i):
-			time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
-		}
-	}
-}
-
-func rateLimiter(done context.Context, reqCh <-chan int) chan int {
-	ch := make(chan int)
-	timer := time.NewTicker(500 * time.Millisecond)
-	go func() {
-		for {
-			select {
-			case <-done.Done():
-				timer.Stop()
-				close(ch)
-				return
-			case v, ok := <-reqCh:
-				if !ok {
-					timer.Stop()
-					close(ch)
-					return
-				}
-				select {
-				case <-timer.C:
-					ch <- v
-				}
-			}
-		}
-	}()
-	return ch
-}
-
-// Generate random values
-func reqGenerator(done context.Context) chan int {
-	reqCh := make(chan int)
-
-	go func() {
-		for {
-			select {
-			case <-done.Done():
-				fmt.Println("req generator down")
-				close(reqCh)
-				return
-			default:
-				reqCh <- rand.Intn(100)
-			}
-		}
-	}()
-	return reqCh
+	bus := NewEventBus()
+	
+	f1 := func(data any) { fmt.Println("h1 got:", data) }
+	f2 := func(data any) { fmt.Println("h2 got:", data) }
+	h1 := NewHandlerWrapper(f1)
+	h2 := NewHandlerWrapper(f2)
+	
+	bus.Subscribe("user.created", h1)
+	bus.Subscribe("user.created", h2)
+	bus.Subscribe("order.placed", h1)
+	bus.Publish("user.created", "Alice")
+	bus.Unsubscribe("user.created", h1)
+	bus.Publish("user.created", "Bob")
+	bus.Publish("order.placed", "order-123")
 }
